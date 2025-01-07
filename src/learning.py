@@ -197,14 +197,53 @@ def get_files_by_date_range(directory, start_date, end_date):
                 files.append(os.path.join(directory, filename))
     return files
 
+def test_model_on_files(model, test_files):
+    """
+    Проверяет модель на тестовых данных.
+
+    Аргументы:
+    - model: обученная модель.
+    - test_files: список файлов для тестирования.
+
+    Выводит метрики модели на тестовых данных.
+    """
+    # Создаем StandardScaler и LabelEncoders, как в обучении
+    label_encoders = create_label_encoders(test_files, categorical_columns)
+    scaler = StandardScaler()
+
+    # Подготавливаем данные для теста
+    X_test, y_test = [], []
+    for file_path in test_files:
+        df = pd.read_parquet(file_path)
+        df = prepare_data_for_model(df, label_encoders, scaler, fit=True)
+
+        X = [df[col].values.astype('int32') for col in categorical_columns]
+        X.append(df[numerical_columns].values.astype('float32'))
+        y = df[ycol].values.astype('float32')
+
+        X_test.append(X)
+        y_test.append(y)
+
+    # Оцениваем модель
+    print("Evaluating model on test data...")
+    for X, y in zip(X_test, y_test):
+        loss, mae = model.evaluate(X, y, verbose=1)
+        print(f"Test Loss: {loss}, Test MAE: {mae}")
+
 
 def main():
     directory = 'C:\\python_projects\\sales_forecast\\data\\normalized'
     start_date = datetime(2024, 2, 1)
-    end_date = datetime(2024, 7, 31)
+    end_date = datetime(2024, 3, 31)
     files_to_load = get_files_by_date_range(directory, start_date, end_date)
-    train_model_on_files(files_to_load)
+    model = train_model_on_files(files_to_load)
 
+    # Даты для тестирования
+    test_start_date = datetime(2024, 4, 1)
+    test_end_date = datetime(2024, 4, 30)
+    test_files = get_files_by_date_range(directory, test_start_date, test_end_date)
+
+    test_model_on_files(model, test_files)
 
 if __name__ == "__main__":
     main()
