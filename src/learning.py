@@ -4,6 +4,7 @@ from tensorflow.keras import layers, Model
 import pandas as pd
 import os
 from datetime import datetime
+import time
 
 
 categorical_columns = ['shop', 'goodsCode1c', 'subgroup', 'group', 'category']
@@ -20,30 +21,79 @@ xcol = ['price', 'temperature', 'prcp', 'holiday',
                      'day_of_month_sin', 'day_of_month_cos']
 ycol = ['allSalesCount', 'count',  'action_count']
 
+last_log_time = time.time()
 
-def prepare_data_for_model(df):
+def print_log(message):
+    global last_log_time
+    
+    # Получаем текущее время
+    current_time = time.time()
+    
+    # Рассчитываем время с последнего лога
+    time_diff = current_time - last_log_time
+    last_log_time = current_time  # Обновляем время последнего лога
+    
+    print(f"[{int(time_diff)}s] {message}")  # Обновляем строку с временем
+
+def create_label_encoders(files_to_load, categorical_columns):
+    print_log("create_label_encoders")
     label_encoders = {}
-    for col in categorical_columns:
+    unique_values_per_column = {col: set() for col in categorical_columns}
+
+    # Сбор уникальных значений из всех файлов
+    for file_path in files_to_load:
+        print_log(f"create_label_encoders {file_path}")
+        df = pd.read_parquet(file_path)
+        for col in categorical_columns:
+            if col in df.columns:
+                unique_values_per_column[col].update(df[col].dropna().unique())
+
+    # Создание LabelEncoder на основе всех уникальных значений
+    for col, unique_values in unique_values_per_column.items():
+        print_log(f"create_label_encoders LabelEncoder {col}")
         le = LabelEncoder()
-        df[col] = le.fit_transform(df[col])
+        le.fit(list(unique_values))
         label_encoders[col] = le
 
-    embeddings = {}
+    print_log("created label_encoders")
+
+    return label_encoders
+
+def prepare_data_for_model(df, label_encoders, scaler, fit=False):
+    """
+    Подготавливает данные для модели, обрабатывая категориальные и числовые данные.
+
+    Аргументы:
+    - df: DataFrame с данными.
+    - label_encoders: словарь с объектами LabelEncoder для категориальных колонок.
+    - scaler: объект StandardScaler для числовых данных.
+    - fit: если True, обучает Scaler на данных (первый проход).
+
+    Возвращает:
+    - DataFrame с обработанными данными.
+    """
+
+    print_log("prepare_data_for_model")
+
     for col in categorical_columns:
-        unique_values = df[col].nunique()
-        embeddings[col] = create_embedding_layer(unique_values, 10)
+        df[col] = label_encoders[col].transform(df[col])
 
-    scaler = StandardScaler()
-    df[numerical_columns] = scaler.fit_transform(df[numerical_columns])
+    if fit:
+        scaler.partial_fit(df[numerical_columns])
+    df[numerical_columns] = scaler.transform(df[numerical_columns])
 
-    return df, embeddings
+    print_log("prepared data_for_model")
+    return df
 
 
 def create_embedding_layer(input_dim, output_dim):
+    print_log("create_embedding_layer")
     return tf.keras.layers.Embedding(input_dim=input_dim, output_dim=output_dim)
 
 
 def create_model(numerical_columns, categorical_columns, embeddings):
+    print_log("create_model")
+
     input_layers = []
     embedding_layers = []
 
@@ -62,29 +112,77 @@ def create_model(numerical_columns, categorical_columns, embeddings):
     dense1 = layers.Dense(128, activation='relu')(combined)
     dense2 = layers.Dense(64, activation='relu')(dense1)
 
-    output = layers.Dense(1, activation='linear')(dense2)
+    output = layers.Dense(len(ycol), activation='linear')(dense2)
+
     model = Model(inputs=input_layers, outputs=output)
     model.compile(optimizer='adam', loss='mse', metrics=['mae'])
+
+    print_log("created model")
+
     return model
 
+def get_embeddings(files_to_load):
+    """
+    Аргументы:
+    - files_to_load: список путей к файлам.
+    """
+    # Хранение уникальных значений для каждой колонки
+
+    print_log("get_embeddings")
+
+    unique_values_per_column = {col: set() for col in categorical_columns}
+
+    # Перебор файлов и накопление уникальных значений
+    for file_path in files_to_load:
+        print_log(f"get_embeddings {file_path}")
+        df = pd.read_parquet(file_path)
+        for col in categorical_columns:
+            if col in df.columns:
+                unique_values_per_column[col].update(df[col].dropna().unique())
+    
+    # Создание эмбеддингов
+    embeddings = {}
+    for col, unique_values in unique_values_per_column.items():
+        embedding_size = min(50, max(1, int(len(unique_values)**0.5)))
+        input_dim = len(unique_values)
+        embeddings[col] = create_embedding_layer(input_dim, embedding_size)  
+
+    print_log("got embeddings")
+    return embeddings  
+            
 
 def train_model_on_files(files_to_load, epochs=1):
-    model = None
-    embeddings = {}
 
+    # Создаем LabelEncoders и эмбеддинги
+    label_encoders = create_label_encoders(files_to_load, categorical_columns)
+    embeddings = get_embeddings(files_to_load)
+
+    # Создаем модель
+    model = create_model(numerical_columns, categorical_columns, embeddings)
+
+    # Создаем StandardScaler для масштабирования числовых данных
+    scaler = StandardScaler()
+
+    print_log("train_model_on_files StandardScaler")
+
+    # Первый проход для обучения StandardScaler
+    for file_path in files_to_load:
+        df = pd.read_parquet(file_path)
+        df = prepare_data_for_model(df, label_encoders, scaler, fit=True)
+
+    print_log("train_model_on_files Learning")
+    # Основной цикл обучения
     for _ in range(epochs):
         for file_path in files_to_load:
             df = pd.read_parquet(file_path)
-            df, new_embeddings = prepare_data_for_model(df)
+            df = prepare_data_for_model(df, label_encoders, scaler, fit=False)
 
-            if model is None:
-                embeddings = new_embeddings
-                model = create_model(numerical_columns, categorical_columns, embeddings)
+            # Формируем входные данные для модели
+            X = [df[col].values.astype('int32') for col in categorical_columns]
+            X.append(df[numerical_columns].values.astype('float32'))
+            y = df[ycol].values.astype('float32')
 
-            X = [df[col].astype('int32') for col in categorical_columns]
-            X.append(df[numerical_columns].astype('float32'))
-            y = df[ycol].values
-
+            # Обучаем модель на текущем файле
             model.fit(X, y, epochs=1, batch_size=64, verbose=1)
 
     return model
