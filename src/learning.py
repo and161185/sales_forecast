@@ -151,7 +151,7 @@ def train_model_on_files(model, files_to_load, label_encoders, epochs=1):
 
             # Формируем входные данные для модели
             X = [df[col].values.astype('int32') for col in categorical_columns]
-            X.append(df[numerical_columns].values.astype('float32'))
+            X.append(df[xcol].values.astype('float32'))
             y = df[ycol].values.astype('float32')
 
             # Обучаем модель на текущем файле
