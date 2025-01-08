@@ -1,11 +1,16 @@
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.preprocessing import LabelEncoder
 import tensorflow as tf
 from tensorflow.keras import layers, Model
 import pandas as pd
 import os
 from datetime import datetime
 import time
+import pickle
 
+
+model_path = "C:\\python_projects\\sales_forecast\\model\\model.keras"
+encoders_path = "C:\\python_projects\\sales_forecast\\model\\label_encoders.pkl"
+directory = 'C:\\python_projects\\sales_forecast\\data\\normalized'
 
 categorical_columns = ['shop', 'goodsCode1c', 'subgroup', 'group', 'category']
 numerical_columns = ['price', 'allSalesCount', 'temperature', 'prcp', 'holiday',
@@ -35,39 +40,13 @@ def print_log(message):
     
     print(f"[{int(time_diff)}s] {message}")  # Обновляем строку с временем
 
-def create_label_encoders(files_to_load, categorical_columns):
-    print_log("create_label_encoders")
-    label_encoders = {}
-    unique_values_per_column = {col: set() for col in categorical_columns}
-
-    # Сбор уникальных значений из всех файлов
-    for file_path in files_to_load:
-        print_log(f"create_label_encoders {file_path}")
-        df = pd.read_parquet(file_path)
-        for col in categorical_columns:
-            if col in df.columns:
-                unique_values_per_column[col].update(df[col].dropna().unique())
-
-    # Создание LabelEncoder на основе всех уникальных значений
-    for col, unique_values in unique_values_per_column.items():
-        print_log(f"create_label_encoders LabelEncoder {col}")
-        le = LabelEncoder()
-        le.fit(list(unique_values))
-        label_encoders[col] = le
-
-    print_log("created label_encoders")
-
-    return label_encoders
-
-def prepare_data_for_model(df, label_encoders, scaler, fit=False):
+def prepare_data_for_model(df, label_encoders):
     """
     Подготавливает данные для модели, обрабатывая категориальные и числовые данные.
 
     Аргументы:
     - df: DataFrame с данными.
     - label_encoders: словарь с объектами LabelEncoder для категориальных колонок.
-    - scaler: объект StandardScaler для числовых данных.
-    - fit: если True, обучает Scaler на данных (первый проход).
 
     Возвращает:
     - DataFrame с обработанными данными.
@@ -77,10 +56,6 @@ def prepare_data_for_model(df, label_encoders, scaler, fit=False):
 
     for col in categorical_columns:
         df[col] = label_encoders[col].transform(df[col])
-
-    if fit:
-        scaler.partial_fit(df[numerical_columns])
-    df[numerical_columns] = scaler.transform(df[numerical_columns])
 
     print_log("prepared data_for_model")
     return df
@@ -142,40 +117,37 @@ def get_embeddings(files_to_load):
     
     # Создание эмбеддингов
     embeddings = {}
+    label_encoders = {}  # Для хранения энкодеров для каждого столбца
+
     for col, unique_values in unique_values_per_column.items():
         embedding_size = min(50, max(1, int(len(unique_values)**0.5)))
         input_dim = len(unique_values)
         embeddings[col] = create_embedding_layer(input_dim, embedding_size)  
 
+        # Обучаем LabelEncoder на уникальных значениях
+        le = LabelEncoder()
+        le.fit(list(unique_values))  # Обучаем энкодер на уникальных значениях
+        label_encoders[col] = le  # Сохраняем энкодер для дальнейшего использования
+
     print_log("got embeddings")
-    return embeddings  
+    return embeddings, label_encoders 
             
 
-def train_model_on_files(files_to_load, epochs=1):
+def train_model_on_files(model, files_to_load, label_encoders, epochs=1):
 
-    # Создаем LabelEncoders и эмбеддинги
-    label_encoders = create_label_encoders(files_to_load, categorical_columns)
-    embeddings = get_embeddings(files_to_load)
+    print_log("train_model_on_files label_encoders")
 
-    # Создаем модель
-    model = create_model(numerical_columns, categorical_columns, embeddings)
-
-    # Создаем StandardScaler для масштабирования числовых данных
-    scaler = StandardScaler()
-
-    print_log("train_model_on_files StandardScaler")
-
-    # Первый проход для обучения StandardScaler
+    # Первый проход для label_encoders
     for file_path in files_to_load:
         df = pd.read_parquet(file_path)
-        df = prepare_data_for_model(df, label_encoders, scaler, fit=True)
+        df = prepare_data_for_model(df, label_encoders)
 
     print_log("train_model_on_files Learning")
     # Основной цикл обучения
     for _ in range(epochs):
         for file_path in files_to_load:
             df = pd.read_parquet(file_path)
-            df = prepare_data_for_model(df, label_encoders, scaler, fit=False)
+            df = prepare_data_for_model(df, label_encoders)
 
             # Формируем входные данные для модели
             X = [df[col].values.astype('int32') for col in categorical_columns]
@@ -197,7 +169,7 @@ def get_files_by_date_range(directory, start_date, end_date):
                 files.append(os.path.join(directory, filename))
     return files
 
-def test_model_on_files(model, test_files):
+def test_model_on_files(model, test_files, label_encoders):
     """
     Проверяет модель на тестовых данных.
 
@@ -207,15 +179,12 @@ def test_model_on_files(model, test_files):
 
     Выводит метрики модели на тестовых данных.
     """
-    # Создаем StandardScaler и LabelEncoders, как в обучении
-    label_encoders = create_label_encoders(test_files, categorical_columns)
-    scaler = StandardScaler()
 
     # Подготавливаем данные для теста
     X_test, y_test = [], []
     for file_path in test_files:
         df = pd.read_parquet(file_path)
-        df = prepare_data_for_model(df, label_encoders, scaler, fit=True)
+        df = prepare_data_for_model(df, label_encoders)
 
         X = [df[col].values.astype('int32') for col in categorical_columns]
         X.append(df[numerical_columns].values.astype('float32'))
@@ -231,19 +200,37 @@ def test_model_on_files(model, test_files):
         print(f"Test Loss: {loss}, Test MAE: {mae}")
 
 
+def save_model_and_encoders(model, label_encoders):
+    # Сохраняем модель
+    model.save(model_path)  # Сохранение модели в файл
+
+    # Сохраняем label_encoders
+    with open(encoders_path, 'wb') as f:
+        pickle.dump(label_encoders, f)  # Сохраняем энкодеры в файл
+
 def main():
-    directory = 'C:\\python_projects\\sales_forecast\\data\\normalized'
     start_date = datetime(2024, 2, 1)
     end_date = datetime(2024, 3, 31)
     files_to_load = get_files_by_date_range(directory, start_date, end_date)
-    model = train_model_on_files(files_to_load)
 
     # Даты для тестирования
     test_start_date = datetime(2024, 4, 1)
     test_end_date = datetime(2024, 4, 30)
     test_files = get_files_by_date_range(directory, test_start_date, test_end_date)
 
-    test_model_on_files(model, test_files)
+    all_files = files_to_load + test_files
+    # Создаем LabelEncoders и эмбеддинги
+
+    embeddings, label_encoders = get_embeddings(all_files)
+
+    # Создаем модель
+    model = create_model(numerical_columns, categorical_columns, embeddings)
+
+    train_model_on_files(model, files_to_load, label_encoders)
+
+    test_model_on_files(model, test_files, label_encoders)
+
+    save_model_and_encoders(model, label_encoders)
 
 if __name__ == "__main__":
     main()

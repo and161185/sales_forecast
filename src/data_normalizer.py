@@ -156,7 +156,7 @@ def normalize_data(df, numeric_cols, group_cols, normalize_ranges, new_ranges):
 
     return merged
 
-def calculate_global_ranges(prepared_path, numeric_columns, group_cols, existing_ranges=None):
+def calculate_dicts(prepared_path, numeric_columns, group_cols, existing_ranges=None):
 
     # Загружаем существующие ranges, если они есть
     if existing_ranges is not None:
@@ -260,7 +260,7 @@ def main():
         print_log("Загружены существующие диапазоны.")
     else:
         print_log("Вычислены новые глобальные диапазоны.")
-        global_ranges = calculate_global_ranges(prepared_path, numeric_columns, group_cols)
+        global_ranges = calculate_dicts(prepared_path, numeric_columns, group_cols)
         save_ranges(range_file, global_ranges)
         print_log(f"Глобальные диапазоны сохранены в {range_file}")
 
