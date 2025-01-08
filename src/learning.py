@@ -13,12 +13,6 @@ encoders_path = "C:\\python_projects\\sales_forecast\\model\\label_encoders.pkl"
 directory = 'C:\\python_projects\\sales_forecast\\data\\normalized'
 
 categorical_columns = ['shop', 'goodsCode1c', 'subgroup', 'group', 'category']
-numerical_columns = ['price', 'allSalesCount', 'temperature', 'prcp', 'holiday',
-                     'pre_holiday', 'is_working_day', 'avg_price', 'count', 'amount', 'discount_value', 'action_amount', 
-                     'action_count', 'action_avg_price', 'count_ma_7', 'count_ma_30', 'price_ma_7', 'price_ma_30', 'currencyRate_ma_7',
-                     'count_lag_1', 'count_lag_7', 'price_lag_1', 'price_lag_7', 'currencyRate_lag_1', 'count_growth_rate_1', 'count_growth_rate_7', 
-                     'price_growth_rate_1', 'price_growth_rate_7', 'day', 'month_sin', 'month_cos', 'day_of_week_sin', 'day_of_week_cos', 
-                     'day_of_month_sin', 'day_of_month_cos']
 xcol = ['price', 'temperature', 'prcp', 'holiday',
                      'pre_holiday', 'is_working_day', 'action_avg_price', 'count_ma_7', 'count_ma_30', 'price_ma_7', 'price_ma_30', 'currencyRate_ma_7',
                      'count_lag_1', 'count_lag_7', 'price_lag_1', 'price_lag_7', 'currencyRate_lag_1', 'count_growth_rate_1', 'count_growth_rate_7', 
@@ -66,7 +60,7 @@ def create_embedding_layer(input_dim, output_dim):
     return tf.keras.layers.Embedding(input_dim=input_dim, output_dim=output_dim)
 
 
-def create_model(numerical_columns, categorical_columns, embeddings):
+def create_model(categorical_columns, embeddings):
     print_log("create_model")
 
     input_layers = []
@@ -78,7 +72,7 @@ def create_model(numerical_columns, categorical_columns, embeddings):
         embedding_layers.append(layers.Flatten()(embedding_layer))
         input_layers.append(input_layer)
 
-    numeric_input = layers.Input(shape=(len(numerical_columns),), name='numeric_input')
+    numeric_input = layers.Input(shape=(len(xcol),), name='numeric_input')
     input_layers.append(numeric_input)
 
     numeric_dense = layers.Dense(64, activation='relu')(numeric_input)
@@ -187,7 +181,7 @@ def test_model_on_files(model, test_files, label_encoders):
         df = prepare_data_for_model(df, label_encoders)
 
         X = [df[col].values.astype('int32') for col in categorical_columns]
-        X.append(df[numerical_columns].values.astype('float32'))
+        X.append(df[xcol].values.astype('float32'))
         y = df[ycol].values.astype('float32')
 
         X_test.append(X)
@@ -224,7 +218,7 @@ def main():
     embeddings, label_encoders = get_embeddings(all_files)
 
     # Создаем модель
-    model = create_model(numerical_columns, categorical_columns, embeddings)
+    model = create_model(categorical_columns, embeddings)
 
     train_model_on_files(model, files_to_load, label_encoders)
 

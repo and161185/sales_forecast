@@ -12,12 +12,6 @@ directory_normalized = 'C:\\python_projects\\sales_forecast\\data\\normalized'
 directory_predictions = 'C:\\python_projects\\sales_forecast\\data\\predictions'
 
 categorical_columns = ['shop', 'goodsCode1c', 'subgroup', 'group', 'category']
-numerical_columns = ['price', 'allSalesCount', 'temperature', 'prcp', 'holiday',
-                     'pre_holiday', 'is_working_day', 'avg_price', 'count', 'amount', 'discount_value', 'action_amount', 
-                     'action_count', 'action_avg_price', 'count_ma_7', 'count_ma_30', 'price_ma_7', 'price_ma_30', 'currencyRate_ma_7',
-                     'count_lag_1', 'count_lag_7', 'price_lag_1', 'price_lag_7', 'currencyRate_lag_1', 'count_growth_rate_1', 'count_growth_rate_7', 
-                     'price_growth_rate_1', 'price_growth_rate_7', 'day', 'month_sin', 'month_cos', 'day_of_week_sin', 'day_of_week_cos', 
-                     'day_of_month_sin', 'day_of_month_cos', "allSalesCount_ma_7", "allSalesCount_ma_30", "allSalesCount_lag_1", "allSalesCount_lag_7"]
 xcol = ['price', 'temperature', 'prcp', 'holiday',
                      'pre_holiday', 'is_working_day', 'action_avg_price', 'count_ma_7', 'count_ma_30', 'price_ma_7', 'price_ma_30', 'currencyRate_ma_7',
                      'count_lag_1', 'count_lag_7', 'price_lag_1', 'price_lag_7', 'currencyRate_lag_1', 'count_growth_rate_1', 'count_growth_rate_7', 
@@ -88,7 +82,7 @@ def test_model_on_files(model, test_files, label_encoders):
         df = prepare_data_for_model(df, label_encoders)
 
         X = [df[col].values.astype('int32') for col in categorical_columns]
-        X.append(df[numerical_columns].values.astype('float32'))
+        X.append(df[xcol].values.astype('float32'))
         y = df[ycol].values.astype('float32')
 
         X_test.append(X)
