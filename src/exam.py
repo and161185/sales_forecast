@@ -9,6 +9,7 @@ import pickle
 model_path = "C:\\python_projects\\sales_forecast\\model\\model.keras"
 encoders_path = "C:\\python_projects\\sales_forecast\\model\\label_encoders.pkl"
 directory_normalized = 'C:\\python_projects\\sales_forecast\\data\\normalized'
+directory_predictions = 'C:\\python_projects\\sales_forecast\\data\\predictions'
 
 categorical_columns = ['shop', 'goodsCode1c', 'subgroup', 'group', 'category']
 numerical_columns = ['price', 'allSalesCount', 'temperature', 'prcp', 'holiday',
@@ -81,6 +82,7 @@ def test_model_on_files(model, test_files, label_encoders):
 
     # Подготавливаем данные для теста
     X_test, y_test = [], []
+    predictions = []
     for file_path in test_files:
         df = pd.read_parquet(file_path)
         df = prepare_data_for_model(df, label_encoders)
@@ -92,11 +94,17 @@ def test_model_on_files(model, test_files, label_encoders):
         X_test.append(X)
         y_test.append(y)
 
-    # Оцениваем модель
-    print("Evaluating model on test data...")
-    for X, y in zip(X_test, y_test):
-        loss, mae = model.evaluate(X, y, verbose=1)
-        print(f"Test Loss: {loss}, Test MAE: {mae}")
+        # Предсказания
+        y_pred = model.predict(X)
+        predictions.append(y_pred)
+
+        # Добавляем предсказанные значения в DataFrame
+        for idx, col in enumerate(ycol):
+            df[f"{col}_predicted"] = y_pred[:, idx]
+
+        # Сохраняем DataFrame с предсказаниями
+        output_path = os.path.join("C:\\python_projects\\sales_forecast\\data\\predictions", os.path.basename(file_path))
+        df.to_parquet(output_path)
 
 def load_model_and_encoders():
     # Загружаем модель
@@ -110,6 +118,7 @@ def load_model_and_encoders():
     return model, label_encoders
 
 def main():
+    os.makedirs(directory_predictions, exist_ok=True)
     model, label_encoders = load_model_and_encoders()
 
     # Даты для тестирования
