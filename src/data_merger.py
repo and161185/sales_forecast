@@ -151,7 +151,7 @@ def add_sales(data, retail_sales):
         how='left'
     )
 
-    merged_data['avg_price'] = merged_data['avg_price'].fillna(0)
+    merged_data[['avg_price', 'count']] = merged_data[['avg_price', 'count']].fillna(0)
     merged_data.loc[merged_data['avg_price'] == 0, 'avg_price'] = merged_data['price']
 
     return merged_data
