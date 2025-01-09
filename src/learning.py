@@ -10,7 +10,8 @@ import pickle
 
 model_path = "C:\\python_projects\\sales_forecast\\model\\model.keras"
 encoders_path = "C:\\python_projects\\sales_forecast\\model\\label_encoders.pkl"
-directory = 'C:\\python_projects\\sales_forecast\\data\\normalized'
+directory_test = 'C:\\python_projects\\sales_forecast\\data\\normalized'
+directory = "C:\\python_projects\\sales_forecast\\data\\shuffled"
 
 categorical_columns = ['shop', 'goodsCode1c', 'subgroup', 'group', 'category']
 xcol = ['price', 'temperature', 'prcp', 'holiday',
@@ -202,15 +203,20 @@ def save_model_and_encoders(model, label_encoders):
     with open(encoders_path, 'wb') as f:
         pickle.dump(label_encoders, f)  # Сохраняем энкодеры в файл
 
+def get_all_files(directory):
+    files = []
+    for root, _, filenames in os.walk(directory):
+        for filename in filenames:
+            files.append(os.path.join(root, filename))
+    return files
+
 def main():
-    start_date = datetime(2024, 2, 1)
-    end_date = datetime(2024, 3, 31)
-    files_to_load = get_files_by_date_range(directory, start_date, end_date)
+    files_to_load = get_all_files(directory)
 
     # Даты для тестирования
     test_start_date = datetime(2024, 4, 1)
     test_end_date = datetime(2024, 4, 30)
-    test_files = get_files_by_date_range(directory, test_start_date, test_end_date)
+    test_files = get_files_by_date_range(directory_test, test_start_date, test_end_date)
 
     all_files = files_to_load + test_files
     # Создаем LabelEncoders и эмбеддинги
