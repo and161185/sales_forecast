@@ -1,6 +1,7 @@
 from sklearn.preprocessing import LabelEncoder
 import tensorflow as tf
 from tensorflow.keras import layers, Model
+from tensorflow.keras.callbacks import EarlyStopping
 import pandas as pd
 import os
 from datetime import datetime
@@ -15,10 +16,10 @@ directory = "C:\\python_projects\\sales_forecast\\data\\shuffled"
 
 categorical_columns = ['shop', 'goodsCode1c', 'subgroup', 'group', 'category']
 xcol = ['price', 'temperature', 'prcp', 'holiday',
-                     'pre_holiday', 'is_working_day', 'action_avg_price', 'count_ma_7', 'count_ma_30', 'price_ma_7', 'price_ma_30', 'currencyRate_ma_7',
-                     'count_lag_1', 'count_lag_7', 'price_lag_1', 'price_lag_7', 'currencyRate_lag_1', 'count_growth_rate_1', 'count_growth_rate_7', 
-                     'day', 'month_sin', 'month_cos', 'day_of_week_sin', 'day_of_week_cos',
-                     'day_of_month_sin', 'day_of_month_cos']
+        'pre_holiday', 'is_working_day', 'action_avg_price', 'count_ma_7', 'count_ma_30', 'price_ma_7', 'price_ma_30', 'currencyRate_ma_7',
+        'count_lag_1', 'count_lag_7', 'price_lag_1', 'price_lag_7', 'currencyRate_lag_1', 'count_growth_rate_1', 'count_growth_rate_7', 
+        'day', 'month_sin', 'month_cos', 'day_of_week_sin', 'day_of_week_cos',
+        'day_of_month_sin', 'day_of_month_cos']
 ycol = ['allSalesCount', 'count',  'action_count']
 
 last_log_time = time.time()
@@ -79,10 +80,16 @@ def create_model(categorical_columns, embeddings):
     numeric_dense = layers.Dense(64, activation='relu')(numeric_input)
 
     combined = layers.Concatenate()([*embedding_layers, numeric_dense])
-    dense1 = layers.Dense(128, activation='relu')(combined)
-    dense2 = layers.Dense(64, activation='relu')(dense1)
+    dense1 = layers.Dense(256, activation='relu')(combined)
+    dropout1 = layers.Dropout(0.3)(dense1)
 
-    output = layers.Dense(len(ycol), activation='linear')(dense2)
+    dense2 = layers.Dense(128, activation='relu')(dropout1)
+    dropout2 = layers.Dropout(0.3)(dense2)
+
+    dense3 = layers.Dense(64, activation='relu')(dropout2)
+    dropout3 = layers.Dropout(0.3)(dense3)
+
+    output = layers.Dense(len(ycol), activation='linear')(dropout3)
 
     model = Model(inputs=input_layers, outputs=output)
     model.compile(optimizer='adam', loss='mse', metrics=['mae'])
@@ -116,6 +123,7 @@ def get_embeddings(files_to_load):
 
     for col, unique_values in unique_values_per_column.items():
         embedding_size = min(50, max(1, int(len(unique_values)**0.5)))
+        print_log(f"embedding_size {col} = {embedding_size}")
         input_dim = len(unique_values)
         embeddings[col] = create_embedding_layer(input_dim, embedding_size)  
 
@@ -128,29 +136,28 @@ def get_embeddings(files_to_load):
     return embeddings, label_encoders 
             
 
-def train_model_on_files(model, files_to_load, label_encoders, epochs=1):
+def train_model_on_files(model, files_to_load, df_val_test, label_encoders, epochs=1):
 
-    print_log("train_model_on_files label_encoders")
+    print_log("train_model_on_files Learning")
+    # Основной цикл обучения
+    early_stopping = EarlyStopping(monitor='val_loss', patience=2, restore_best_weights=True)
 
-    # Первый проход для label_encoders
+    df_val_test = prepare_data_for_model(df_val_test, label_encoders)
+    X_val = [df_val_test[col].values.astype('int32') for col in categorical_columns]
+    X_val.append(df_val_test[xcol].values.astype('float32'))
+    y_val = df_val_test[ycol].values.astype('float32')
+
     for file_path in files_to_load:
         df = pd.read_parquet(file_path)
         df = prepare_data_for_model(df, label_encoders)
 
-    print_log("train_model_on_files Learning")
-    # Основной цикл обучения
-    for _ in range(epochs):
-        for file_path in files_to_load:
-            df = pd.read_parquet(file_path)
-            df = prepare_data_for_model(df, label_encoders)
+        # Формируем входные данные для модели
+        X = [df[col].values.astype('int32') for col in categorical_columns]
+        X.append(df[xcol].values.astype('float32'))
+        y = df[ycol].values.astype('float32')
 
-            # Формируем входные данные для модели
-            X = [df[col].values.astype('int32') for col in categorical_columns]
-            X.append(df[xcol].values.astype('float32'))
-            y = df[ycol].values.astype('float32')
-
-            # Обучаем модель на текущем файле
-            model.fit(X, y, epochs=1, batch_size=64, verbose=1)
+        # Обучаем модель на текущем файле
+        model.fit(X, y, epochs=epochs, batch_size=32, verbose=1, validation_data=(X_val, y_val), callbacks=[early_stopping])
 
     return model
 
@@ -164,7 +171,7 @@ def get_files_by_date_range(directory, start_date, end_date):
                 files.append(os.path.join(directory, filename))
     return files
 
-def test_model_on_files(model, test_files, label_encoders):
+def test_model_on_files(model, df, label_encoders):
     """
     Проверяет модель на тестовых данных.
 
@@ -177,16 +184,15 @@ def test_model_on_files(model, test_files, label_encoders):
 
     # Подготавливаем данные для теста
     X_test, y_test = [], []
-    for file_path in test_files:
-        df = pd.read_parquet(file_path)
-        df = prepare_data_for_model(df, label_encoders)
 
-        X = [df[col].values.astype('int32') for col in categorical_columns]
-        X.append(df[xcol].values.astype('float32'))
-        y = df[ycol].values.astype('float32')
+    df = prepare_data_for_model(df, label_encoders)
 
-        X_test.append(X)
-        y_test.append(y)
+    X = [df[col].values.astype('int32') for col in categorical_columns]
+    X.append(df[xcol].values.astype('float32'))
+    y = df[ycol].values.astype('float32')
+
+    X_test.append(X)
+    y_test.append(y)
 
     # Оцениваем модель
     print("Evaluating model on test data...")
@@ -218,6 +224,13 @@ def main():
     test_end_date = datetime(2024, 4, 30)
     test_files = get_files_by_date_range(directory_test, test_start_date, test_end_date)
 
+    test_file = test_files[0]
+    df_test = pd.read_parquet(test_file)
+    df_test = df_test.sample(frac=1).reset_index(drop=True)
+
+    df_val_test = df_test[:int(0.5 * len(files_to_load))]
+    df_test = files_to_load[int(0.5* len(files_to_load)):]
+
     all_files = files_to_load + test_files
     # Создаем LabelEncoders и эмбеддинги
 
@@ -226,9 +239,9 @@ def main():
     # Создаем модель
     model = create_model(categorical_columns, embeddings)
 
-    train_model_on_files(model, files_to_load, label_encoders)
+    train_model_on_files(model, files_to_load, df_val_test, label_encoders, epochs=3)
 
-    test_model_on_files(model, test_files, label_encoders)
+    test_model_on_files(model, df_test, label_encoders)
 
     save_model_and_encoders(model, label_encoders)
 
