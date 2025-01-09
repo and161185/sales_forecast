@@ -237,7 +237,7 @@ def main():
         "prcp", "avg_price", "count", "amount", "discount_value",
         "action_amount", "action_count", "action_avg_price", "count_ma_7", "count_ma_30",
         "price_ma_7", "price_ma_30", "currencyRate_ma_7", "count_lag_1", "count_lag_7", "price_lag_1", "price_lag_7",
-        "currencyRate_lag_1", "count_growth_rate_1", "count_growth_rate_7", "price_growth_rate_1", "price_growth_rate_7",
+        "currencyRate_lag_1", "count_growth_rate_1", "count_growth_rate_7",
         "allSalesCount_ma_7", "allSalesCount_ma_30", "allSalesCount_lag_1", "allSalesCount_lag_7"
     ]
     group_cols = ['shop', 'goodsCode1c']

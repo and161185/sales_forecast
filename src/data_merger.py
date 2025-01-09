@@ -241,10 +241,10 @@ def add_trends_dynamics(data):
     # Считаем скользящие средние и лаги за один проход
     print_log("Считаем скользящие средние")
     #скользящее среднее по количеству не можем считать от текущей строки, т.к. на сегодня продажи неизвестны, делаем shift(1)
-    data['count_ma_7'] = grouped['count'].shift(1).rolling(7, min_periods=1).mean().round(3)
-    data['count_ma_30'] = grouped['count'].shift(1).rolling(30, min_periods=1).mean().round(3)
-    data['allSalesCount_ma_7'] = grouped['allSalesCount'].shift(1).rolling(7, min_periods=1).mean().round(3)
-    data['allSalesCount_ma_30'] = grouped['allSalesCount'].shift(1).rolling(30, min_periods=1).mean().round(3)
+    data['count_ma_7'] = grouped['count'].shift(1).rolling(7, min_periods=1).mean().round(3).values
+    data['count_ma_30'] = grouped['count'].shift(1).rolling(30, min_periods=1).mean().round(3).values
+    data['allSalesCount_ma_7'] = grouped['allSalesCount'].shift(1).rolling(7, min_periods=1).mean().round(3).values
+    data['allSalesCount_ma_30'] = grouped['allSalesCount'].shift(1).rolling(30, min_periods=1).mean().round(3).values
     
     data['price_ma_7'] = grouped['price'].rolling(7, min_periods=1).mean().round(3).values
     data['price_ma_30'] = grouped['price'].rolling(30, min_periods=1).mean().round(3).values
@@ -254,8 +254,8 @@ def add_trends_dynamics(data):
     print_log("Считаем лаги")
     data['count_lag_1'] = grouped['count'].shift(1).round(3).values
     data['count_lag_7'] = grouped['count'].shift(7).round(3).values
-    data['allSalesCount_lag_1'] = grouped['count'].shift(1).round(3).values
-    data['allSalesCount_lag_7'] = grouped['count'].shift(7).round(3).values
+    data['allSalesCount_lag_1'] = grouped['allSalesCount'].shift(1).round(3).values
+    data['allSalesCount_lag_7'] = grouped['allSalesCount'].shift(7).round(3).values
     data['price_lag_1'] = grouped['price'].shift(1).round(3).values
     data['price_lag_7'] = grouped['price'].shift(7).round(3).values
     data['currencyRate_lag_1'] = grouped['currencyRate'].shift(1).round(3).values
@@ -263,13 +263,13 @@ def add_trends_dynamics(data):
     # Вычисляем темпы роста
     lags = [1, 7]
     print_log("Вычисляем темпы роста")
-    for col in ['allSalesCount', 'count', 'price']:
+    for col in ['allSalesCount', 'count']:
         for lag in lags:
             lag_col = f'{col}_lag_{lag}'
             growth_rate_col = f"{col}_growth_rate_{lag}"
-            diff = data[col] - data[lag_col]
-            data[growth_rate_col] = ((diff / data[lag_col]).replace([np.inf, -np.inf], 0).fillna(0) * 100).round(5)
 
+            diff = data[lag_col] - grouped[col].shift(lag*2).round(3).values
+            data[growth_rate_col] = ((diff / data[lag_col]).fillna(0).replace([np.inf, -np.inf], 0) * 100).round(3)
 
     return data
 

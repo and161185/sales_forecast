@@ -15,7 +15,7 @@ categorical_columns = ['shop', 'goodsCode1c', 'subgroup', 'group', 'category']
 xcol = ['price', 'temperature', 'prcp', 'holiday',
                      'pre_holiday', 'is_working_day', 'action_avg_price', 'count_ma_7', 'count_ma_30', 'price_ma_7', 'price_ma_30', 'currencyRate_ma_7',
                      'count_lag_1', 'count_lag_7', 'price_lag_1', 'price_lag_7', 'currencyRate_lag_1', 'count_growth_rate_1', 'count_growth_rate_7', 
-                     'price_growth_rate_1', 'price_growth_rate_7', 'day', 'month_sin', 'month_cos', 'day_of_week_sin', 'day_of_week_cos',
+                     'day', 'month_sin', 'month_cos', 'day_of_week_sin', 'day_of_week_cos',
                      'day_of_month_sin', 'day_of_month_cos']
 ycol = ['allSalesCount', 'count',  'action_count']
 
