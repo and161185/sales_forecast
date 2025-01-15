@@ -18,7 +18,14 @@ dtype_leftovers = {
     'price': 'float32',
     'leftovers': 'float32',
     'allSalesCount': 'float32',
+    'allReturnsCount': 'float32',
     'allSalesAmount': 'float32'
+}
+
+dtype_new = {
+    'shop': 'int8',
+    'goodsCode1c': 'str',
+    'new': 'float32'
 }
 
 dtype_retail_sales = {
@@ -39,7 +46,9 @@ leftovers_path = "C:\\python_projects\\sales_forecast\\data\\leftovers\\"
 retail_sales_path = "C:\\python_projects\\sales_forecast\\data\\retail_sales_data\\"
 usd_kzt_path = "C:\\python_projects\\sales_forecast\\data\\usd_kzt.xlsx"
 weather_path = "C:\\python_projects\\sales_forecast\\data\\weather.xlsx"
+new_path = "C:\\python_projects\\sales_forecast\\data\\new.csv"
 holidays_path = "C:\\python_projects\\sales_forecast\\data\\holidays.xlsx"
+google_trends_path = "C:\\python_projects\\sales_forecast\\data\\groups_trends.parquet"
 temp_path = "C:\\python_projects\\sales_forecast\\data\\temp\\"
 prepared_path = "C:\\python_projects\\sales_forecast\\data\\prepared\\"
 
@@ -98,6 +107,13 @@ def load_holidays_data(path):
     data['Date'] = pd.to_datetime(data['Date'], errors='coerce', format='%d.%m.%Y')
     return data.set_index('Date')[['Holiday', 'Pre_holiday', 'Rescheduled_working_day']].to_dict(orient='index')
 
+def load_new_data(path):
+    data = pd.read_csv(path, parse_dates=['operDay'], dtype = dtype_new)
+    return data
+
+def load_google_trends(path):
+    data = pd.read_parquet(path)
+    return data
 
 def read_file_by_date_range(path, start_date, end_date, dtype, read_prev_month, sort_values = False, ext = 'csv'):
     print_log(f"чтение {path} на дату {start_date}")
@@ -153,6 +169,34 @@ def add_sales(data, retail_sales):
 
     merged_data[['avg_price', 'count']] = merged_data[['avg_price', 'count']].fillna(0)
     merged_data.loc[merged_data['avg_price'] == 0, 'avg_price'] = merged_data['price']
+
+    return merged_data
+
+def add_new(data, new_data):
+    print_log("Добавление данных новинок")
+
+    merged_data = pd.merge(
+        data,
+        new_data,
+        on=['operDay', 'shop', 'goodsCode1c'],
+        how='left'
+    )
+
+    merged_data[['new']] = merged_data[['new']].fillna(0)
+
+    return merged_data
+
+def add_google_trends(data, google_trends):
+    print_log("Добавление данных гугл трендов")
+
+    merged_data = pd.merge(
+        data,
+        google_trends[['operDay', 'subgroup', 'average_trend', 'trend_growth_rate']],
+        on=['operDay', 'subgroup'],
+        how='left'
+    ).rename(columns={'average_trend': 'average_google_trend', 'trend_growth_rate': 'google_trend_growth_rate'})
+
+    merged_data[['average_google_trend', 'google_trend_growth_rate']] = merged_data[['average_google_trend', 'google_trend_growth_rate']].fillna(0)
 
     return merged_data
 
@@ -216,6 +260,7 @@ def add_holidays(data, holidays_dict):
 
     # Удаляем столбец
     data = data.drop(columns=['rescheduled_working_day'])
+    data['weekend'] = data['operDay'].apply(lambda x: 1 if x.weekday() >= 5 else 0)
 
     return data
 
@@ -228,6 +273,44 @@ def fast_shift_and_round(group, shifts, decimals):
             shifted[:s] = np.nan  # Заполняем начало NaN
         result.append(np.round(shifted, decimals))
     return np.column_stack(result)
+
+def add_inflation(data):
+    # Создаем копию, чтобы сохранить исходные данные без изменений
+    df = data[['operDay', 'shop', 'subgroup', 'price']].copy()
+
+    # Сортируем копию
+    df = df.sort_values(by=['operDay', 'subgroup', 'price'])
+    
+    # Отбираем первую четверть
+    df['quartile'] = df.groupby(['operDay', 'subgroup'])['price'].transform(
+        lambda x: x.rank(method='first') <= len(x) * 0.25
+    )
+    
+    # Рассчитываем среднюю цену для первой четверти
+    df['avg_price_quartile'] = df.groupby(['operDay', 'subgroup', 'quartile'])['price'].transform('mean')
+    
+    # Фильтруем только первую четверть
+    filtered_data = df[df['quartile']].copy()
+    
+    # Рассчитываем инфляцию (процентное изменение средней цены)
+    filtered_data['day_inflation'] = (
+        filtered_data.groupby(['shop', 'subgroup'])['avg_price_quartile'].pct_change() * 100
+    )
+
+    # Агрегируем данные по ключевым колонкам, чтобы они стали уникальными
+    filtered_data = filtered_data.groupby(['operDay', 'shop', 'subgroup'], as_index=False)['day_inflation'].mean()
+
+    
+    merged_data = pd.merge(
+            data,
+            filtered_data[['operDay', 'shop', 'subgroup','day_inflation']],
+            on=['operDay', 'shop', 'subgroup'],
+            how='left'
+        )
+    
+    merged_data['day_inflation'] = merged_data['day_inflation'].fillna(0)
+
+    return merged_data  
 
 def add_trends_dynamics(data):
     print_log("Подготовка к расчету трендов")
@@ -259,6 +342,11 @@ def add_trends_dynamics(data):
     data['price_lag_1'] = grouped['price'].shift(1).round(3).values
     data['price_lag_7'] = grouped['price'].shift(7).round(3).values
     data['currencyRate_lag_1'] = grouped['currencyRate'].shift(1).round(3).values
+    data['returns_rate_lag_1'] = grouped['returns_rate'].shift(1).round(3).values
+    data['sell_ratio_lag_1'] = grouped['sell_ratio'].shift(1).round(3).values
+    data['sold_out_lag_1'] = grouped['sold_out'].shift(1).round(3).values
+    data['average_google_trend_lag_1'] = grouped['average_google_trend'].shift(1).round(3).values
+    data['google_trend_growth_rate_lag_1'] = grouped['google_trend_growth_rate'].shift(1).round(3).values
 
     # Вычисляем темпы роста
     lags = [1, 7]
@@ -270,6 +358,9 @@ def add_trends_dynamics(data):
 
             diff = data[lag_col] - grouped[col].shift(lag*2).round(3).values
             data[growth_rate_col] = ((diff / data[lag_col]).fillna(0).replace([np.inf, -np.inf], 0) * 100).round(3)
+
+    diff = data['price_lag_7'] - grouped['price'].shift(7).round(3).values
+    data['price_growth_rate_7'] = ((diff / data['price']).fillna(0).replace([np.inf, -np.inf], 0) * 100).round(3)
 
     return data
 
@@ -300,6 +391,8 @@ def main():
     currency_dict = load_currency_data(usd_kzt_path)
     weather_dict = load_weather_data(weather_path)
     holidays_dict = load_holidays_data(holidays_path)
+    new_dict = load_new_data(new_path)
+    google_trends = load_google_trends(google_trends_path)
 
     os.makedirs(temp_path, exist_ok=True)
 
@@ -324,9 +417,21 @@ def main():
         data['day_of_month'] = data['operDay'].dt.day
         data['day_of_week'] = data['operDay'].dt.weekday + 1
 
+        data['category_avg_price'] = data.groupby(['operDay', 'shop', 'goodsCode1c', 'subgroup'])['price'].transform('mean')
+        data['price_level'] = data['price'] /  data['category_avg_price']
+
+        data['sell_ratio'] = data['allSalesCount'] / data['leftovers'].replace(0, np.nan)
+        data['sell_ratio'] = data['sell_ratio'].fillna(1)
+        data['sold_out'] = np.where(data['sell_ratio'] > 0.85, 1, 0)
+
+        data['returns_rate'] = data['allReturnsCount'] /  data['allSalesCount'].replace(0, np.nan)
+        data['returns_rate'] = data['returns_rate'].fillna(0)  # Заполнить NaN нулями
+
         data = add_currency_rate(data, currency_dict)
         data = add_weather(data, weather_dict)
         data = add_holidays(data, holidays_dict)    
+        data = add_new(data, new_dict)
+        data = add_google_trends(data, google_trends)
 
         data = remove_zero_data_pairs(data) 
 
@@ -364,6 +469,7 @@ def main():
         data = read_file_by_date_range(temp_path, month_start, month_end, None, True, False, "parquet")
 
         data = add_trends_dynamics(data)
+        data = add_inflation(data)
 
         file_name = f"{month_start[:7]}.parquet"  # Берём только год-месяц из строки даты
         file_path = os.path.join(prepared_path, file_name)
@@ -378,7 +484,9 @@ def main():
             'action_avg_price', 'count_ma_7', 'count_ma_30', 
             'count_lag_1', 'count_lag_7', 'price_lag_1', 'price_lag_7',
             'currencyRate_ma_7', 'currencyRate_lag_1',
-            'allSalesCount_ma_7', 'allSalesCount_ma_30', 'allSalesCount_lag_1', 'allSalesCount_lag_7'
+            'allSalesCount_ma_7', 'allSalesCount_ma_30', 'allSalesCount_lag_1', 'allSalesCount_lag_7',
+            'price_level', 'sell_ratio', 'sold_out', 'average_google_trend', 'google_trend_growth_rate',
+            'returns_rate_lag_1', 'sell_ratio_lag_1', 'sold_out_lag_1', 'average_google_trend_lag_1', 'google_trend_growth_rate_lag_1'
         ]
 
         # Список столбцов для заполнения пустыми строками
