@@ -26,7 +26,7 @@ def print_log(message):
 
 def read_prepared(current_month_file):
     month_data = pd.read_parquet(current_month_file)
-    month_data['action_type'] = month_data['action_type'].replace([0, '0'], '')
+    month_data["action_type"] = month_data["action_type"].replace([0, "0"], "")
     return month_data
 
 # Логарифмическая трансформация с учетом сдвига
@@ -44,10 +44,10 @@ def add_cyclic_features_with_days(df, column, month_column):
     days_in_month = {
         1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 6: 30, 7: 31, 8: 31, 9: 30, 10: 31, 11: 30, 12: 31
     }
-    df['days_in_month'] = df[month_column].map(days_in_month)
-    df[f"{column}_sin"] = np.sin(2 * np.pi * df[column] / df['days_in_month'])
-    df[f"{column}_cos"] = np.cos(2 * np.pi * df[column] / df['days_in_month'])
-    df.drop(columns=['days_in_month'], inplace=True)
+    df["days_in_month"] = df[month_column].map(days_in_month)
+    df[f"{column}_sin"] = np.sin(2 * np.pi * df[column] / df["days_in_month"])
+    df[f"{column}_cos"] = np.cos(2 * np.pi * df[column] / df["days_in_month"])
+    df.drop(columns=["days_in_month"], inplace=True)
     return df
 
 # Преобразование циклических признаков для фиксированных диапазонов
@@ -64,7 +64,7 @@ def add_normalized_day_column(df, start_year=2010, end_year=2100):
     start_date = datetime(start_year, 1, 1)
     end_date = datetime(end_year, 1, 1)
     total_days = (end_date - start_date).days
-    df['day'] = (pd.to_datetime(df['operDay']) - start_date).dt.days / total_days
+    df["day"] = (pd.to_datetime(df["operDay"]) - start_date).dt.days / total_days
     return df
 
 # Проверка и загрузка диапазонов и сдвигов
@@ -92,43 +92,41 @@ def normalize_data(df, numeric_cols, group_cols, normalize_ranges, new_ranges):
     print_log("начало нормализации")
 
     # Считаем min/max по группам
-    agg = df.groupby(group_cols)[numeric_cols].agg(['min', 'max']).reset_index()
+    agg = df.groupby(group_cols)[numeric_cols].agg(["min", "max"]).reset_index()
 
     # Преобразуем в плоскую структуру
-    agg.columns = group_cols + [f"{col}_{stat}" for col in numeric_cols for stat in ['min', 'max']]
+    agg.columns = group_cols + [f"{col}_{stat}" for col in numeric_cols for stat in ["min", "max"]]
 
     print_log("min/max рассчитан")
 
     # Мержим результат агрегации с исходным df
-    merged = df.merge(agg, on=group_cols, how='left')
+    merged = df.merge(agg, on=group_cols, how="left")
 
     # Мержим с глобальными диапазонами для нормализации
-    merged = merged.merge(normalize_ranges, on=group_cols, how='left', suffixes=('', '_global'))
+    merged = merged.merge(normalize_ranges, on=group_cols, how="left", suffixes=("", "_global"))
 
     print_log("данные объединены")
 
     # Нормализуем данные
     for col in numeric_cols:
-        cmin_global = f'{col}_min_global'
-        cmax_global = f'{col}_max_global'
+        cmin_global = f"{col}_min_global"
+        cmax_global = f"{col}_max_global"
 
         # Нормализуем по глобальным диапазонам (normalize_ranges)
         merged[col] = (merged[col] - merged[cmin_global]) / (merged[cmax_global] - merged[cmin_global] + 1e-8)
 
-    # Преобразуем пустые строки в NaN
-    merged['action_type'] = merged['action_type'].replace('', np.nan)
-    merged = pd.get_dummies(merged, columns=['action_type'], prefix='action_type', dummy_na=False)
+        gc.collect()
     
     print_log("нормализация выполнена")
 
     # Обновляем ranges
     # Собираем min/max по группам сразу для всех числовых колонок
-    group_mins = merged.groupby(group_cols)[[f'{col}_min' for col in numeric_cols]].min()
-    group_maxs = merged.groupby(group_cols)[[f'{col}_max' for col in numeric_cols]].max()
+    group_mins = merged.groupby(group_cols)[[f"{col}_min" for col in numeric_cols]].min()
+    group_maxs = merged.groupby(group_cols)[[f"{col}_max" for col in numeric_cols]].max()
     print_log("рассчитаны мин/макс по группам")
 
     # Объединяем в один DataFrame
-    group_stats = group_mins.join(group_maxs, lsuffix='_min', rsuffix='_max')
+    group_stats = group_mins.join(group_maxs, lsuffix="_min", rsuffix="_max")
     print_log("мин/макс объединены")
 
     # Если ranges пустые — инициализируем их
@@ -137,17 +135,17 @@ def normalize_data(df, numeric_cols, group_cols, normalize_ranges, new_ranges):
     else:
         # Добавляем новые минимумы и максимумы
         for col in numeric_cols:
-            new_ranges[f'{col}_min'] = np.minimum(
-                new_ranges.get(f'{col}_min', np.inf), group_stats[f'{col}_min']
+            new_ranges[f"{col}_min"] = np.minimum(
+                new_ranges.get(f"{col}_min", np.inf), group_stats[f"{col}_min"]
             )
-            new_ranges[f'{col}_max'] = np.maximum(
-                new_ranges.get(f'{col}_max', -np.inf), group_stats[f'{col}_max']
+            new_ranges[f"{col}_max"] = np.maximum(
+                new_ranges.get(f"{col}_max", -np.inf), group_stats[f"{col}_max"]
             )
    
     # Объединяем все колонки для удаления в один список
     columns_to_drop = list(
-        merged.filter(regex='(_min|_max|_min_global|_max_global|_global)$').columns
-    ) + ['day_of_week', 'day_of_month', 'year', 'goodsCode', 'currencyRate', 'leftovers']  # Добавляем фиксированные колонки
+        merged.filter(regex="(_min|_max|_min_global|_max_global|_global)$").columns
+    ) + ["day_of_week", "day_of_month", "year", "goodsCode", "currencyRate", "leftovers"]  # Добавляем фиксированные колонки
 
     # Удаляем все ненужные колонки за один вызов
     merged.drop(columns=columns_to_drop, inplace=True)
@@ -160,7 +158,7 @@ def calculate_dicts(prepared_path, numeric_columns, group_cols, existing_ranges=
 
     # Загружаем существующие ranges, если они есть
     if existing_ranges is not None:
-        ranges_df = pd.DataFrame.from_dict(existing_ranges, orient='index')
+        ranges_df = pd.DataFrame.from_dict(existing_ranges, orient="index")
         ranges_df.index = pd.MultiIndex.from_tuples(ranges_df.index, names=group_cols)
     else:
         ranges_df = pd.DataFrame()
@@ -176,13 +174,13 @@ def calculate_dicts(prepared_path, numeric_columns, group_cols, existing_ranges=
                 df = pd.read_parquet(file_path)
 
                 # Агрегируем данные
-                agg = df.groupby(group_cols)[numeric_columns].agg(['min', 'max'])
-                agg.columns = ['_'.join(col) for col in agg.columns]  # Преобразуем мультииндекс в плоские имена колонок
+                agg = df.groupby(group_cols)[numeric_columns].agg(["min", "max"])
+                agg.columns = ["_".join(col) for col in agg.columns]  # Преобразуем мультииндекс в плоские имена колонок
 
                 # Если диапазоны уже есть, объединяем их
                 if not ranges_df.empty:
                     # Выполняем join по индексам
-                    merged = ranges_df.join(agg, how='outer', rsuffix='_new')
+                    merged = ranges_df.join(agg, how="outer", rsuffix="_new")
 
                     # Пересчитываем минимумы и максимумы
                     for col in numeric_columns:
@@ -208,8 +206,8 @@ def calculate_dicts(prepared_path, numeric_columns, group_cols, existing_ranges=
     ranges_df = ranges_df.reset_index()
 
     # Добавляем дополнительные колонки для группы
-    ranges_df['shop'] = ranges_df['shop'].astype('int8')  # или если не строка
-    ranges_df['goodsCode1c'] = ranges_df['goodsCode1c'].astype('string')  # или если не строка
+    ranges_df["shop"] = ranges_df["shop"].astype("int8")  # или если не строка
+    ranges_df["goodsCode1c"] = ranges_df["goodsCode1c"].astype("string")  # или если не строка
 
     # Возвращаем DataFrame
     return ranges_df
@@ -217,10 +215,10 @@ def calculate_dicts(prepared_path, numeric_columns, group_cols, existing_ranges=
 def check_ranges_for_retraining(old_ranges, new_ranges, numeric_cols, threshold=0.1):
     # Сравниваем только числовые диапазоны из numeric_cols
     for col in numeric_cols:
-        old_min = old_ranges[f'{col}_min'].values
-        old_max = old_ranges[f'{col}_max'].values
-        new_min = new_ranges[f'{col}_min'].values
-        new_max = new_ranges[f'{col}_max'].values
+        old_min = old_ranges[f"{col}_min"].values
+        old_max = old_ranges[f"{col}_max"].values
+        new_min = new_ranges[f"{col}_min"].values
+        new_max = new_ranges[f"{col}_max"].values
 
         # Проверяем, изменились ли диапазоны слишком сильно
         min_diff = np.abs(old_min - new_min) / (np.abs(old_min) + 1e-8)
@@ -238,9 +236,13 @@ def main():
         "action_amount", "action_count", "action_avg_price", "count_ma_7", "count_ma_30",
         "price_ma_7", "price_ma_30", "currencyRate_ma_7", "count_lag_1", "count_lag_7", "price_lag_1", "price_lag_7",
         "currencyRate_lag_1", "count_growth_rate_1", "count_growth_rate_7",
-        "allSalesCount_ma_7", "allSalesCount_ma_30", "allSalesCount_lag_1", "allSalesCount_lag_7"
+        "allSalesCount_ma_7", "allSalesCount_ma_30", "allSalesCount_lag_1", "allSalesCount_lag_7",
+        "category_avg_price", "price_growth_rate_7", "day_inflation",
+        "price_level", "sell_ratio", "average_google_trend",
+        "average_google_trend_lag_1"
     ]
-    group_cols = ['shop', 'goodsCode1c']
+    
+    group_cols = ["shop", "goodsCode1c"]
 
     start_date = "2024-01-01"
     end_date = "2024-12-31"
@@ -276,7 +278,7 @@ def main():
 
         print_log(f"обработка данных за {month_start} - {month_end}")    
 
-        month_file = os.path.join(prepared_path, f"{current_date.strftime('%Y-%m')}.parquet")
+        month_file = os.path.join(prepared_path, f'{current_date.strftime("%Y-%m")}.parquet')
         df = read_prepared(month_file)
 
             # Применяем циклические признаки для даты

@@ -10,20 +10,27 @@ import os
 from datetime import datetime
 import time
 import pickle
+import json
 
 
-model_path = "C:\\python_projects\\sales_forecast\\model\\model.keras"
+models_path = "C:\\python_projects\\sales_forecast\\model\\"
 encoders_path = "C:\\python_projects\\sales_forecast\\model\\label_encoders.pkl"
 directory_test = 'C:\\python_projects\\sales_forecast\\data\\normalized'
 directory = "C:\\python_projects\\sales_forecast\\data\\shuffled"
 
-categorical_columns = ['shop', 'goodsCode1c', 'subgroup', 'group', 'category']
+categorical_columns = ['shop', 'goodsCode1c', 'subgroup', 'group', 'category', 'action_type']
 xcol = ['price', 'temperature', 'prcp', 'holiday',
-        'pre_holiday', 'is_working_day', 'action_avg_price', 'count_ma_7', 'count_ma_30', 'price_ma_7', 'price_ma_30', 'currencyRate_ma_7',
+        'pre_holiday', 'is_working_day', 'weekend', 'action_avg_price', 'category_avg_price', 'price_level',
+        'new',
+        'allSalesCount_ma_30', 'allSalesCount_ma_7', 'count_ma_7', 'count_ma_30', 'price_ma_7', 'price_ma_30', 'currencyRate_ma_7',
+        'allSalesCount_lag_1', 'allSalesCount_lag_7', 'returns_rate_lag_1', 'sell_ratio_lag_1',
+        'sold_out_lag_1', 'average_google_trend_lag_1', 'google_trend_growth_rate_lag_1', 
+        'allSalesCount_growth_rate_1', 'allSalesCount_growth_rate_7', 'price_growth_rate_7', 'day_inflation',
         'count_lag_1', 'count_lag_7', 'price_lag_1', 'price_lag_7', 'currencyRate_lag_1', 'count_growth_rate_1', 'count_growth_rate_7', 
         'day', 'month_sin', 'month_cos', 'day_of_week_sin', 'day_of_week_cos',
         'day_of_month_sin', 'day_of_month_cos']
-ycol = ['allSalesCount', 'count',  'action_count']
+ycol_is_sell = ['is_sell']
+ycol_count = ['allSalesCount', 'count',  'action_count']
 
 last_log_time = time.time()
 
@@ -54,7 +61,7 @@ def prepare_data_for_model(df, label_encoders):
     print_log("prepare_data_for_model")
 
     for col in categorical_columns:
-        df[col] = label_encoders[col].transform(df[col])
+        df[:,col] = label_encoders[col].transform(df[col])
 
     print_log("prepared data_for_model")
     return df
@@ -65,7 +72,7 @@ def create_embedding_layer(input_dim, output_dim):
     return tf.keras.layers.Embedding(input_dim=input_dim, output_dim=output_dim)
 
 
-def create_model(categorical_columns, embeddings):
+def create_model_count(categorical_columns, embeddings):
     print_log("create_model")
 
     input_layers = []
@@ -84,26 +91,50 @@ def create_model(categorical_columns, embeddings):
 
     combined = layers.Concatenate()([*embedding_layers, numeric_dense])
     dense1 = layers.Dense(128, activation='relu')(combined)
-    dropout1 = layers.Dropout(0.2)(dense1)
 
-    dense2 = layers.Dense(64, activation='relu')(dropout1)
-    dropout2 = layers.Dropout(0.2)(dense2)
+    dense2 = layers.Dense(64, activation='relu')(dense1)   
 
-    dense3 = layers.Dense(32, activation='relu')(dropout2)
-    dropout3 = layers.Dropout(0.2)(dense3)
+    output = layers.Dense(len(ycol_count), activation='linear')(dense2)
 
-    dense4 = layers.Dense(8, activation='relu')(dropout3)
-    dropout4 = layers.Dropout(0.2)(dense4)        
-
-    output = layers.Dense(len(ycol), activation='linear')(dropout4)
-
-    optimizer = Adam(learning_rate=0.0001)
     model = Model(inputs=input_layers, outputs=output)
-    model.compile(optimizer=optimizer, loss='mse', metrics=['mae'])
+    model.compile(optimizer='Adam', loss='mse', metrics=['mae'])
 
     print_log("created model")
 
-    return model
+    return {"model": model, "ycol": ycol_count, "name": "count", "condition": "is_sell == 1"}
+
+def create_model_is_sell(categorical_columns, embeddings):
+    print_log("create_model")
+
+    input_layers = []
+    embedding_layers = []
+
+    for col in categorical_columns:
+        input_layer = layers.Input(shape=(1,), name=col)
+        embedding_layer = embeddings[col](input_layer)
+        embedding_layers.append(layers.Flatten()(embedding_layer))
+        input_layers.append(input_layer)
+
+    numeric_input = layers.Input(shape=(len(xcol),), name='numeric_input')
+    input_layers.append(numeric_input)
+
+    numeric_dense = layers.Dense(64, activation='relu')(numeric_input)
+
+    combined = layers.Concatenate()([*embedding_layers, numeric_dense])
+    dense1 = layers.Dense(128, activation='relu')(combined)
+
+    dense2 = layers.Dense(64, activation='relu')(dense1)
+
+    # Выходной слой с активацией sigmoid
+    output = layers.Dense(len(ycol_is_sell), activation='sigmoid')(dense2)
+
+    # Создание и компиляция модели
+    model = Model(inputs=input_layers, outputs=output)
+    model.compile(optimizer='Adam', loss='binary_crossentropy', metrics=['accuracy'])
+
+    print_log("created model")
+
+    return {"model": model, "ycol": ycol_is_sell, "name": "is_sell", "condition": ""}
 
 def get_embeddings(files_to_load):
     """
@@ -129,7 +160,7 @@ def get_embeddings(files_to_load):
     label_encoders = {}  # Для хранения энкодеров для каждого столбца
 
     for col, unique_values in unique_values_per_column.items():
-        embedding_size = min(50, max(1, int(len(unique_values)**0.37)))
+        embedding_size = min(49, max(1, int(len(unique_values)**0.37))) + 1
         print_log(f"embedding_size {col} = {embedding_size}")
         input_dim = len(unique_values)
         embeddings[col] = create_embedding_layer(input_dim, embedding_size)  
@@ -143,20 +174,34 @@ def get_embeddings(files_to_load):
     return embeddings, label_encoders 
             
 
-def train_model_on_files(model, files_to_load, df_val_test, label_encoders, epochs=1):
+def train_model_on_files(model_dict, files_to_load, df_val_test, label_encoders, epochs=1):
+
+    model = model_dict['model']
+    model_ycol = model_dict['ycol']
+    condition = model_dict['condition']
+
+    if condition:
+        filtered_df_test = df_val_test.query(condition)
+    else:
+        filtered_df_test = df_val_test.copy()  # Возвращаем весь DataFrame
 
     print_log("train_model_on_files Learning")
     # Основной цикл обучения
-    early_stopping = EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)
+    early_stopping = EarlyStopping(monitor='val_loss', patience=2, restore_best_weights=True)
 
-    df_val_test = prepare_data_for_model(df_val_test, label_encoders)
-    X_val = [df_val_test[col].values.astype('int32') for col in categorical_columns]
-    X_val.append(df_val_test[xcol].values.astype('float32'))
-    y_val = df_val_test[ycol].values.astype('float32')
+    df_val_test = prepare_data_for_model(filtered_df_test, label_encoders)
+    X_val = [filtered_df_test[col].values.astype('int32') for col in categorical_columns]
+    X_val.append(filtered_df_test[xcol].values.astype('float32'))
+    y_val = filtered_df_test[model_ycol].values.astype('float32')
 
     for file_path in files_to_load:
         df = pd.read_parquet(file_path)
-        chunks = np.array_split(df, len(df) // 500000)
+        if condition:
+            filtered_df = df.query(condition)
+        else:
+            filtered_df = df.copy()  # Возвращаем весь DataFrame
+
+        chunks = np.array_split(filtered_df, len(df) // 500000)
         
         for chunk_index, chunk in enumerate(chunks, 1):
             print(f"обрабатываю чанк {chunk_index}/{len(chunks)} файла {file_path}")
@@ -166,10 +211,11 @@ def train_model_on_files(model, files_to_load, df_val_test, label_encoders, epoc
             # Формируем входные данные для модели
             X = [chunk[col].values.astype('int32') for col in categorical_columns]
             X.append(chunk[xcol].values.astype('float32'))
-            y = chunk[ycol].values.astype('float32')
+            y = chunk[model_ycol].values.astype('float32')
 
             # Обучаем модель на текущем фрагменте
             model.fit(X, y, epochs=epochs, batch_size=32, verbose=1, validation_data=(X_val, y_val), callbacks=[early_stopping])
+            break
 
     return model
 
@@ -183,40 +229,26 @@ def get_files_by_date_range(directory, start_date, end_date):
                 files.append(os.path.join(directory, filename))
     return files
 
-def test_model_on_files(model, df, label_encoders):
-    """
-    Проверяет модель на тестовых данных.
-
-    Аргументы:
-    - model: обученная модель.
-    - test_files: список файлов для тестирования.
-
-    Выводит метрики модели на тестовых данных.
-    """
-
-    # Подготавливаем данные для теста
-    X_test, y_test = [], []
-
-    df = prepare_data_for_model(df, label_encoders)
-
-    X = [df[col].values.astype('int32') for col in categorical_columns]
-    X.append(df[xcol].values.astype('float32'))
-    y = df[ycol].values.astype('float32')
-
-    X_test.append(X)
-    y_test.append(y)
-
-    # Оцениваем модель
-    print("Evaluating model on test data...")
-    for X, y in zip(X_test, y_test):
-        loss, mae = model.evaluate(X, y, verbose=1)
-        print(f"Test Loss: {loss}, Test MAE: {mae}")
-
-
-def save_model_and_encoders(model, label_encoders):
+def save_model(model_data):
     # Сохраняем модель
-    model.save(model_path)  # Сохранение модели в файл
+    model = model_data['model']
+    model_name = model_data['name']
+    model_ycol = model_data['ycol']
+    model_condition = model_data['condition']
+    model.save(os.path.join(models_path, model_name + '.keras'))
+    
+    # Сохраняем метаданные
+    metadata = {
+        "ycol": model_ycol,
+        "name": model_name,
+        "condition": model_condition
+    }
+    metadata_path = os.path.join(models_path, model_name + '_metadata.json')
+    with open(metadata_path, 'w') as f:
+        json.dump(metadata, f, indent=4)
 
+
+def save_label_encoders(label_encoders):
     # Сохраняем label_encoders
     with open(encoders_path, 'wb') as f:
         pickle.dump(label_encoders, f)  # Сохраняем энкодеры в файл
@@ -240,8 +272,8 @@ def main():
     df_test = pd.read_parquet(test_file)
     df_test = df_test.sample(frac=1).reset_index(drop=True)
 
-    df_val_test = df_test[:int(0.5 * len(files_to_load))]
-    df_test = df_test[int(0.5* len(files_to_load)):]
+    df_val_test = df_test[:int(0.05 * len(df_test))]
+    df_test = df_test[int(0.95* len(df_test)):]
 
     all_files = files_to_load + test_files
     # Создаем LabelEncoders и эмбеддинги
@@ -249,13 +281,15 @@ def main():
     embeddings, label_encoders = get_embeddings(all_files)
 
     # Создаем модель
-    model = create_model(categorical_columns, embeddings)
+    model_is_sell = create_model_is_sell(categorical_columns, embeddings)
+    train_model_on_files(model_is_sell, files_to_load, df_val_test, label_encoders, epochs=5)
+    
+    model_count = create_model_count(categorical_columns, embeddings)
+    train_model_on_files(model_count, files_to_load, df_val_test, label_encoders, epochs=10)
 
-    train_model_on_files(model, files_to_load, df_val_test, label_encoders, epochs=10)
-
-    test_model_on_files(model, df_test, label_encoders)
-
-    save_model_and_encoders(model, label_encoders)
+    save_model(model_is_sell)
+    save_model(model_count)
+    save_label_encoders(label_encoders)
 
 if __name__ == "__main__":
     main()

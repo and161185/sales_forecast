@@ -419,6 +419,7 @@ def main():
 
         data['category_avg_price'] = data.groupby(['operDay', 'shop', 'goodsCode1c', 'subgroup'])['price'].transform('mean')
         data['price_level'] = data['price'] /  data['category_avg_price']
+        data['is_sell'] = np.where(data['allSalesCount'] > 0, 1, 0)
 
         data['sell_ratio'] = data['allSalesCount'] / data['leftovers'].replace(0, np.nan)
         data['sell_ratio'] = data['sell_ratio'].fillna(1)
@@ -485,6 +486,7 @@ def main():
             'count_lag_1', 'count_lag_7', 'price_lag_1', 'price_lag_7',
             'currencyRate_ma_7', 'currencyRate_lag_1',
             'allSalesCount_ma_7', 'allSalesCount_ma_30', 'allSalesCount_lag_1', 'allSalesCount_lag_7',
+            'new', 'price_growth_rate_7', 'day_inflation',
             'price_level', 'sell_ratio', 'sold_out', 'average_google_trend', 'google_trend_growth_rate',
             'returns_rate_lag_1', 'sell_ratio_lag_1', 'sold_out_lag_1', 'average_google_trend_lag_1', 'google_trend_growth_rate_lag_1'
         ]
