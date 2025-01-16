@@ -61,7 +61,7 @@ def prepare_data_for_model(df, label_encoders):
     print_log("prepare_data_for_model")
 
     for col in categorical_columns:
-        df[:,col] = label_encoders[col].transform(df[col])
+        df.loc[:, col] = label_encoders[col].transform(df[col])
 
     print_log("prepared data_for_model")
     return df
