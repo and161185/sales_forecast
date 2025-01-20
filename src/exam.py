@@ -14,7 +14,7 @@ directory_predictions = 'C:\\python_projects\\sales_forecast\\data\\predictions'
 
 categorical_columns = ['shop', 'goodsCode1c', 'subgroup', 'group', 'category', 'action_type']
 xcol = ['price', 'temperature', 'prcp', 'holiday',
-        'pre_holiday', 'is_working_day', 'weekend', 'action_avg_price', 'category_avg_price', 'price_level',
+        'pre_holiday', 'is_working_day', 'weekend', 'category_avg_price', 'price_level',
         'new',
         'allSalesCount_ma_30', 'allSalesCount_ma_7', 'count_ma_7', 'count_ma_30', 'price_ma_7', 'price_ma_30', 'currencyRate_ma_7',
         'allSalesCount_lag_1', 'allSalesCount_lag_7', 'returns_rate_lag_1', 'sell_ratio_lag_1',

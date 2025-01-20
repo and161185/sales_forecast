@@ -4,6 +4,8 @@ from tensorflow.keras import layers, Model
 from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras import regularizers
+from tensorflow.keras.layers import Input, Dense, Embedding, LayerNormalization, MultiHeadAttention, GlobalAveragePooling1D, Dropout
+
 import pandas as pd
 import numpy as np
 import os
@@ -20,7 +22,7 @@ directory = "C:\\python_projects\\sales_forecast\\data\\shuffled"
 
 categorical_columns = ['shop', 'goodsCode1c', 'subgroup', 'group', 'category', 'action_type']
 xcol = ['price', 'temperature', 'prcp', 'holiday',
-        'pre_holiday', 'is_working_day', 'weekend', 'action_avg_price', 'category_avg_price', 'price_level',
+        'pre_holiday', 'is_working_day', 'weekend', 'category_avg_price', 'price_level',
         'new',
         'allSalesCount_ma_30', 'allSalesCount_ma_7', 'count_ma_7', 'count_ma_30', 'price_ma_7', 'price_ma_30', 'currencyRate_ma_7',
         'allSalesCount_lag_1', 'allSalesCount_lag_7', 'returns_rate_lag_1', 'sell_ratio_lag_1',
@@ -61,6 +63,10 @@ def prepare_data_for_model(df, label_encoders):
     print_log("prepare_data_for_model")
 
     for col in categorical_columns:
+        if df[col].dtype == 'int8':
+            df[col] = df[col].astype('object')
+
+        # Применяем LabelEncoder
         df.loc[:, col] = label_encoders[col].transform(df[col])
 
     print_log("prepared data_for_model")
@@ -109,30 +115,45 @@ def create_model_is_sell(categorical_columns, embeddings):
     input_layers = []
     embedding_layers = []
 
+    # Этап 1: Преобразуем категориальные данные с помощью Embedding
     for col in categorical_columns:
         input_layer = layers.Input(shape=(1,), name=col)
         embedding_layer = embeddings[col](input_layer)
         embedding_layers.append(layers.Flatten()(embedding_layer))
         input_layers.append(input_layer)
 
+    # Этап 2: Добавляем вход для числовых признаков
     numeric_input = layers.Input(shape=(len(xcol),), name='numeric_input')
     input_layers.append(numeric_input)
 
-    numeric_dense = layers.Dense(64, activation='relu')(numeric_input)
+    # Этап 3: Объединение эмбеддингов и числовых данных
+    combined = layers.Concatenate()([*embedding_layers, numeric_input])
 
-    combined = layers.Concatenate()([*embedding_layers, numeric_dense])
-    dense1 = layers.Dense(128, activation='relu')(combined)
+    # Этап 4: Преобразуем данные в последовательность для Transformer
+    # Допустим, мы задаем максимальную длину последовательности (max_sequence_length)
+    max_sequence_length = 7
+    x = layers.Reshape((max_sequence_length, -1))(combined)  # Добавляем дополнительную размерность, чтобы это подходило под трансформер
 
-    dense2 = layers.Dense(64, activation='relu')(dense1)
+    # Этап 5: Применяем MultiHead Attention
+    attention = MultiHeadAttention(num_heads=4, key_dim=64)(x, x)
+    attention = LayerNormalization()(attention)
+    attention = Dropout(0.2)(attention)
 
-    # Выходной слой с активацией sigmoid
+    # Этап 6: Глобальное усреднение после внимания
+    x = GlobalAveragePooling1D()(attention)
+
+    # Этап 7: Применяем полносвязные слои
+    dense1 = layers.Dense(256, activation='relu')(x)
+    dense2 = layers.Dense(128, activation='relu')(dense1)
+    
+    # Выходной слой
     output = layers.Dense(len(ycol_is_sell), activation='sigmoid')(dense2)
 
     # Создание и компиляция модели
     model = Model(inputs=input_layers, outputs=output)
     model.compile(optimizer='Adam', loss='binary_crossentropy', metrics=['accuracy'])
 
-    print_log("created model")
+    print("created model_with_transformer")
 
     return {"model": model, "ycol": ycol_is_sell, "name": "is_sell", "condition": ""}
 
@@ -174,8 +195,7 @@ def get_embeddings(files_to_load):
     return embeddings, label_encoders 
             
 
-def train_model_on_files(model_dict, files_to_load, df_val_test, label_encoders, epochs=1):
-
+def train_model_on_files(model_dict, files_to_load, df_val_test, label_encoders, epochs=1, max_sequence_length=30):
     model = model_dict['model']
     model_ycol = model_dict['ycol']
     condition = model_dict['condition']
@@ -190,9 +210,14 @@ def train_model_on_files(model_dict, files_to_load, df_val_test, label_encoders,
     early_stopping = EarlyStopping(monitor='val_loss', patience=2, restore_best_weights=True)
 
     df_val_test = prepare_data_for_model(filtered_df_test, label_encoders)
-    X_val = [filtered_df_test[col].values.astype('int32') for col in categorical_columns]
+    X_val = [
+        filtered_df_test[col].values.astype('int32') for col in categorical_columns
+    ]
     X_val.append(filtered_df_test[xcol].values.astype('float32'))
     y_val = filtered_df_test[model_ycol].values.astype('float32')
+
+    # Преобразуем в последовательности для трансформера
+    X_val_seq = create_sequence_data(X_val, max_sequence_length)
 
     for file_path in files_to_load:
         df = pd.read_parquet(file_path)
@@ -202,22 +227,49 @@ def train_model_on_files(model_dict, files_to_load, df_val_test, label_encoders,
             filtered_df = df.copy()  # Возвращаем весь DataFrame
 
         chunks = np.array_split(filtered_df, len(df) // 500000)
-        
+
         for chunk_index, chunk in enumerate(chunks, 1):
-            print(f"обрабатываю чанк {chunk_index}/{len(chunks)} файла {file_path}")
+            print(f"Обрабатываю чанк {chunk_index}/{len(chunks)} файла {file_path}")
 
             chunk = prepare_data_for_model(chunk, label_encoders)
 
             # Формируем входные данные для модели
-            X = [chunk[col].values.astype('int32') for col in categorical_columns]
+            X = [
+                chunk[col].values.astype('int32') for col in categorical_columns
+            ]
             X.append(chunk[xcol].values.astype('float32'))
             y = chunk[model_ycol].values.astype('float32')
 
+            # Преобразуем в последовательности для трансформера
+            X_seq = create_sequence_data(X, max_sequence_length)
+
             # Обучаем модель на текущем фрагменте
-            model.fit(X, y, epochs=epochs, batch_size=32, verbose=1, validation_data=(X_val, y_val), callbacks=[early_stopping])
+            model.fit(X_seq, y, epochs=epochs, batch_size=32, verbose=1, validation_data=(X_val_seq, y_val), callbacks=[early_stopping])
             break
 
     return model
+
+
+def create_sequence_data(X, max_sequence_length):
+    """
+    Преобразует данные в последовательности для трансформера
+    """
+    # Допустим, что X - это список из [categorical_data, numerical_data], где:
+    # categorical_data - последовательность категориальных данных (например, 7 дней)
+    # numerical_data - последовательность числовых данных (например, температура, продажи)
+    
+    # Преобразуем каждый признак в последовательность длины max_sequence_length
+    sequence_data = []
+
+    for feature_data in X:
+        # Формируем последовательности для каждого признака
+        feature_sequence = np.array([
+            feature_data[i:i + max_sequence_length] for i in range(len(feature_data) - max_sequence_length + 1)
+        ])
+        sequence_data.append(feature_sequence)
+
+    # Объединяем все данные в одну последовательность
+    return np.concatenate(sequence_data, axis=-1)
 
 
 def get_files_by_date_range(directory, start_date, end_date):
